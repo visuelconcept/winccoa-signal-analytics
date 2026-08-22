@@ -1,0 +1,165 @@
+# =============================================================================
+# WebUI Runtime Workspace .gitignore
+#
+# This repo holds the versioned sources of the Signal Analytics module
+# (libs/, backend/python/, docs/, tools/). The runtime dev workspace is
+# scaffolded IN PLACE by `webui-runtime-init` and stays untracked — see
+# DEVELOPMENT.md. This file must be self-contained.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
+node_modules/
+
+# -----------------------------------------------------------------------------
+# Build output
+# -----------------------------------------------------------------------------
+dist/
+dev-dist/
+out-tsc/
+*.tgz
+*.tgz.bak
+*.tar.gz
+.license-cache.json
+.deploy-release-cache.json
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# -----------------------------------------------------------------------------
+# Vite / Vitest
+# -----------------------------------------------------------------------------
+vite.config.*.timestamp*
+vitest.config.*.timestamp*
+
+# -----------------------------------------------------------------------------
+# TypeScript
+# -----------------------------------------------------------------------------
+**/.tsbuildinfo
+/tsconfig.base.tsbuildinfo
+
+# -----------------------------------------------------------------------------
+# Nx
+# -----------------------------------------------------------------------------
+**/.nx/cache
+**/.nx/workspace-data
+**/.nx/artifacts
+
+# -----------------------------------------------------------------------------
+# Test artifacts
+# -----------------------------------------------------------------------------
+coverage/
+**/test-results/
+**/*test-report.xml
+apps/*-e2e/*videos
+apps/*-e2e/*screenshots
+!apps/*-e2e/*screenshots/baseline
+apps/*-e2e/playwright/.auth/
+apps/*-e2e/test-results/
+apps/*-e2e/src/downloads/
+apps/*-e2e/coverage/
+apps/*-nfr/playwright/.auth/
+apps/*-nfr/test-results/
+apps/*-nfr/nfr-results/
+
+# -----------------------------------------------------------------------------
+# Build cache / generated intermediates
+# -----------------------------------------------------------------------------
+apps/dashboard-wc/scripts/.license-cache.json
+
+# -----------------------------------------------------------------------------
+# Environment & secrets
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+.npmrc
+!standalone.npmrc
+
+# -----------------------------------------------------------------------------
+# IDE & editors
+# -----------------------------------------------------------------------------
+.idea/
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.launch
+.project
+.classpath
+.c9/
+.settings/
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+# -----------------------------------------------------------------------------
+# OS files
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+**/custom-elements.json
+tmp/
+
+# =============================================================================
+# Scaffolded WebUI-runtime workspace — PARTIAL ignore
+#
+# `webui-runtime-init` scaffolds the runtime workspace and `wire-workspace.mjs`
+# re-patches it. We can ONLY ignore scaffold files that NX DOES NOT READ:
+# nx EXCLUDES .gitignored paths from its project graph, so apps/, libs/*,
+# nx.json, package.json, project.json, tsconfig.base.json (and the eslint/
+# prettier/vitest configs) MUST stay visible — ignoring them breaks `nx build`.
+# Those scaffold files therefore remain untracked.
+# =============================================================================
+
+# Scaffolded docs (knowledge base + diagrams) — EXCEPT the guides this repo
+# versions itself (a parent-dir exclude cannot be re-included, so exclude
+# contents and re-include the path down to the versioned files).
+/docs/knowledge/**
+!/docs/knowledge/project/
+/docs/knowledge/project/*
+!/docs/knowledge/project/winccoa-python-manager-guide.md
+!/docs/knowledge/project/critical-thinking-rules.md
+/docs/diagrams/
+
+# Scaffolded doc images (per-page manual images under docs/images/manual/ stay tracked)
+/docs/images/oa-widget-external-model-viewer.png
+/docs/images/oa-widget-step-by-step-example.png
+/docs/images/temp-widget.svg
+
+# Editor / AI-assistant skills & prompts (scaffolded)
+/.github/prompts/
+/.claude/skills/
+/.ai/skills/
+/.vscode/settings.json
+
+# Runtime helper scripts (scaffolded; not read by nx)
+/tools/scripts/init-oa-data.mjs
+/tools/scripts/init-oa-data.spec.ts
+/tools/scripts/deploy-oa-data.mjs
+/tools/scripts/deploy-oa-data.spec.ts
+/tools/scripts/postinstall-webui-runtime.mjs
+/tools/scripts/postinstall-webui-runtime.spec.ts
+
+# oa-data: only the scaffolded README (branding under oa-data/WebUI/ stays trackable)
+/oa-data/README.md

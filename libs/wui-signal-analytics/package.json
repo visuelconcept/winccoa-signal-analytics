@@ -1,0 +1,53 @@
+{
+  "name": "@visuelconcept/wui-signal-analytics",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Signal Analytics \u2014 standalone WinCC OA WebUI page: configure the datapoint elements to watch, then show the anomalies and the recurring shapes a Python manager finds in them (matrix profile \u2014 built-in NumPy or STUMPY \u2014 or Chronos forecasting), on the archived history and continuously on the live values.",
+  "author": {
+    "name": "Visuel Concept"
+  },
+  "keywords": [
+    "OpenArchitecture",
+    "WinCCOA",
+    "dashboard",
+    "webcomponents",
+    "standalone-page",
+    "anomaly-detection",
+    "matrix-profile"
+  ],
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@visuelconcept/wui-kit": "*"
+  },
+  "peerDependencies": {
+    "lit": "*",
+    "rxjs": "*",
+    "echarts": "*",
+    "@etm-professional-control/oa-rx-js-api": "*",
+    "@wincc-oa/wui-shared": "*",
+    "@wincc-oa/wui-ix-wrappers": "*",
+    "@wincc-oa/wui-oarxjs-context": "*"
+  },
+  "exports": {
+    "./*": {
+      "types": "./types/*",
+      "import": "./*"
+    }
+  },
+  "wuiPage": {
+    "route": "/signal-analytics",
+    "routeId": "signal-analytics",
+    "component": "wui-signal-analytics",
+    "module": "/data/dashboard-wc/pages/signal-analytics.js",
+    "icon": "analysis",
+    "permission": [
+      "connected"
+    ],
+    "tier": 3,
+    "backend": {
+      "pythonManagers": [
+        "signal_analytics_manager.py"
+      ]
+    }
+  }
+}
