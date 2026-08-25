@@ -553,6 +553,146 @@ def _event(dp_path: str, value: str):
     return Event()
 
 
+# --- the provisioning hub -----------------------------------------------------
+
+
+class FakeEngineeringManager:
+    """The engineering slice of the API: what :mod:`signal_analytics.provision` calls.
+
+    ``dp_types`` reports both types as already present, which is what keeps
+    ``_string_type`` from importing ``etm.wccoa`` — there is no WinCC OA behind a
+    test run.
+    """
+
+    def __init__(self, existing: tuple[str, ...] = ()) -> None:
+        self.written: dict[str, str] = {}
+        self.created: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
+        self.existing = set(existing)
+
+    def dp_types(self, pattern: str = "", system_id: int = 0, include_empty: bool = True):
+        return [pattern]
+
+    def dp_exists(self, dpe: str) -> bool:
+        return dpe.rstrip(".") in self.existing
+
+    def dp_create(self, dp_name: str, dp_type: str) -> None:
+        self.created.append((dp_name, dp_type))
+        self.existing.add(dp_name)
+
+    def dp_delete(self, dp_name: str) -> None:
+        if dp_name not in self.existing:
+            raise RuntimeError(f"{dp_name} does not exist")
+        self.deleted.append(dp_name)
+        self.existing.discard(dp_name)
+
+    def dp_set_wait(self, dpe, value) -> None:
+        self.written[dpe] = value
+
+
+def _hub_answer(manager: FakeEngineeringManager) -> dict:
+    from signal_analytics.protocol import HUB_DP, HUB_LEAF_RESPONSE
+
+    return json.loads(manager.written[f"{HUB_DP}.{HUB_LEAF_RESPONSE}"])
+
+
+def test_safe_dp_name_keeps_only_what_winccoa_accepts() -> None:
+    from signal_analytics.protocol import DP_PREFIX, safe_dp_name
+
+    assert safe_dp_name("SigAnalysis_furnace-temp") == "SigAnalysis_furnace-temp"
+    # A name arriving without the prefix gets it; separators and dots are dropped.
+    assert safe_dp_name("furnace temp/../x") == f"{DP_PREFIX}furnacetempx"
+    # Nothing usable left -> no name at all, so the caller refuses the request.
+    assert safe_dp_name("///") == ""
+    assert safe_dp_name("") == ""
+    assert len(safe_dp_name("x" * 200)) <= 60
+
+
+def test_hub_request_needs_a_known_op_and_an_id() -> None:
+    from signal_analytics.protocol import parse_hub_request
+
+    assert parse_hub_request("not json") is None
+    assert parse_hub_request('{"op":"create"}') is None  # no requestId
+    assert parse_hub_request('{"requestId":"c-1","op":"drop","dp":"x"}') is None
+    request = parse_hub_request(
+        '{"requestId":"c-1","op":"create","config":{"dp":"SigAnalysis_a","label":"A"}}'
+    )
+    assert request is not None
+    assert request.is_create and request.dp == "SigAnalysis_a"
+    assert json.loads(request.config_raw)["label"] == "A"
+
+
+def test_hub_create_makes_the_datapoint_and_seeds_its_config() -> None:
+    from signal_analytics.protocol import DP_TYPE, parse_hub_request
+    from signal_analytics.provision import handle
+
+    manager = FakeEngineeringManager()
+    request = parse_hub_request(
+        '{"requestId":"c-1","op":"create","config":{"dp":"SigAnalysis_a","label":"A"}}'
+    )
+    handle(manager, request)
+
+    assert manager.created == [("SigAnalysis_a", DP_TYPE)]
+    assert json.loads(manager.written["SigAnalysis_a.config"])["label"] == "A"
+    answer = _hub_answer(manager)
+    assert answer["ok"] is True
+    assert answer["requestId"] == "c-1"
+    assert answer["dp"] == "SigAnalysis_a"
+
+
+def test_hub_create_of_an_existing_datapoint_is_a_success() -> None:
+    from signal_analytics.protocol import parse_hub_request
+    from signal_analytics.provision import handle
+
+    manager = FakeEngineeringManager(existing=("SigAnalysis_a",))
+    handle(manager, parse_hub_request('{"requestId":"c-2","op":"create","dp":"SigAnalysis_a"}'))
+
+    assert manager.created == []
+    assert _hub_answer(manager)["ok"] is True
+
+
+def test_hub_delete_removes_the_datapoint() -> None:
+    from signal_analytics.protocol import parse_hub_request
+    from signal_analytics.provision import handle
+
+    manager = FakeEngineeringManager(existing=("SigAnalysis_a",))
+    handle(manager, parse_hub_request('{"requestId":"d-1","op":"delete","dp":"SigAnalysis_a"}'))
+
+    assert manager.deleted == ["SigAnalysis_a"]
+    assert _hub_answer(manager)["ok"] is True
+
+
+def test_hub_refuses_a_datapoint_outside_the_module_prefix() -> None:
+    from signal_analytics.protocol import HubRequest
+    from signal_analytics.provision import handle
+
+    manager = FakeEngineeringManager(existing=("System_Critical",))
+    # Bypassing parse_hub_request on purpose: this is the fence itself under test.
+    handle(manager, HubRequest(request_id="d-2", op="delete", dp="System_Critical"))
+
+    assert manager.deleted == []
+    answer = _hub_answer(manager)
+    assert answer["ok"] is False
+    assert "SigAnalysis_" in answer["error"]
+
+
+def test_hub_reports_an_engineering_failure_instead_of_raising() -> None:
+    from signal_analytics.protocol import parse_hub_request
+    from signal_analytics.provision import handle
+
+    manager = FakeEngineeringManager()
+
+    def refuse(dp_name: str, dp_type: str) -> None:
+        raise RuntimeError("no engineering rights")
+
+    manager.dp_create = refuse  # type: ignore[method-assign]
+    handle(manager, parse_hub_request('{"requestId":"c-3","op":"create","dp":"SigAnalysis_a"}'))
+
+    answer = _hub_answer(manager)
+    assert answer["ok"] is False
+    assert answer["error"] == "no engineering rights"
+
+
 def main() -> int:
     failures = 0
     for name, test in sorted(globals().items()):

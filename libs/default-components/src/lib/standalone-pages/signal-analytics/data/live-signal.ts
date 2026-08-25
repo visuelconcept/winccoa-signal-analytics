@@ -18,7 +18,7 @@
  * carries `{ dp, value }` and no timestamp, so plotting on arrival time would
  * bend the curve by the transport latency and, worse, by whatever the browser
  * was doing at that moment. Subscribing `:_online.._stime` alongside the value —
- * the pattern `wui-para`'s detail table already uses — puts each point at the
+ * — puts each point at the
  * instant the process produced it. Arrival time remains the fallback for an
  * element whose source time is not readable.
  *

@@ -35,12 +35,7 @@
  * Registered at `/signal-analytics` (component `wui-signal-analytics`).
  */
 import { OaRxJsApi } from '@etm-professional-control/oa-rx-js-api';
-import {
-  hasRole$,
-  registerModuleRoles,
-  type AppModuleRoles
-} from '@visuelconcept/wui-kit/data/app-security.js';
-import '@visuelconcept/wui-kit/ui/wui-confirm-dialog.js';
+import './signal-analytics/ui/sa-confirm-dialog.js';
 import '@wincc-oa/wui-ix-wrappers/wui-content-header/wui-content-header.js';
 import '@wincc-oa/wui-oarxjs-context/components/wui-context-generator/wui-context-generator.js';
 import { IXCoreStyles } from '@wincc-oa/wui-shared/styles/ix-core.js';
@@ -48,7 +43,10 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Subscription } from 'rxjs';
 import { container } from 'tsyringe';
-import appSecurityRoles from './app-security.roles.json';
+import {
+  pagePermissions$,
+  type PagePermissions
+} from './signal-analytics/data/permissions.js';
 import {
   demoLive,
   demoResult,
@@ -94,7 +92,6 @@ import './signal-analytics/ui/sa-signal-dialog.js';
 import './signal-analytics/ui/sa-summary.js';
 
 /** Application-Security module id (= the page id). */
-const MODULE_ID = 'signal-analytics';
 
 /** Page title — a proper noun, identical in all three languages. */
 const PAGE_TITLE = 'Signal Analytics';
@@ -121,16 +118,19 @@ export class WuiSignalAnalytics extends LitElement {
   @state() private dialogOpen = false;
   @state() private deleting: SignalConfig | null = null;
 
-  /** Application-Security grants — open until an admin assigns groups. */
-  @state() private roleView = true;
-  @state() private roleConfigure = true;
-  @state() private roleRun = true;
+  /**
+   * What the connected user may do — the runtime's own `canEdit` / `canWrite`.
+   * Open until the user settings arrive (and in an isolated dev browser, where
+   * the store is in demonstration mode and writes nothing anyway).
+   */
+  @state() private mayConfigure = true;
+  @state() private mayRun = true;
 
   private readonly store = new SignalStore();
   private readonly api = this.resolveApi();
   /** Subscription on the SELECTED signal's element — one at a time, by design. */
   private readonly liveSignal = new LiveSignal(this.resolveApi());
-  private roleSub = new Subscription();
+  private permissionSub = new Subscription();
   /** Guards against two history reads racing when updates arrive in a burst. */
   private historyToken = 0;
 
@@ -153,28 +153,20 @@ export class WuiSignalAnalytics extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    registerModuleRoles(appSecurityRoles as AppModuleRoles);
-    this.roleSub = hasRole$(MODULE_ID, 'view').subscribe(
-      (granted) => (this.roleView = granted)
-    );
-    this.roleSub.add(
-      hasRole$(MODULE_ID, 'configure').subscribe((granted) => {
-        this.roleConfigure = granted;
-        // Close an editor opened before the grant was revoked mid-session.
-        if (!granted) this.closeDialog();
-      })
-    );
-    this.roleSub.add(
-      hasRole$(MODULE_ID, 'run').subscribe(
-        (granted) => (this.roleRun = granted)
-      )
+    this.permissionSub = pagePermissions$().subscribe(
+      (granted: PagePermissions) => {
+        this.mayConfigure = granted.configure;
+        this.mayRun = granted.run;
+        // Close an editor opened before the permission was lost mid-session.
+        if (!granted.configure) this.closeDialog();
+      }
     );
     void this.load();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    this.roleSub.unsubscribe();
+    this.permissionSub.unsubscribe();
     this.store.unwatchAll();
     this.liveSignal.stop();
   }
@@ -196,14 +188,7 @@ export class WuiSignalAnalytics extends LitElement {
         <wui-content-header></wui-content-header>
       </wui-context-generator>
       <div class="body">
-        ${
-          this.roleView
-            ? html`${this.renderToolbar()} ${this.renderOffline()}
-              ${this.renderContent()}`
-            : html`<div class="center muted">
-                ${localizeDir(MSG.page.roleForbidden)}
-              </div>`
-        }
+        ${this.renderToolbar()} ${this.renderOffline()} ${this.renderContent()}
       </div>
       ${this.renderDialogs()}
     `;
@@ -225,7 +210,7 @@ export class WuiSignalAnalytics extends LitElement {
           >${localizeDir(MSG.page.refresh)}
         </ix-button>
         ${
-          this.roleConfigure
+          this.mayConfigure
             ? html`<ix-button @click=${() => this.openDialog(null)}>
                 <ix-icon name="plus" slot="icon"></ix-icon
                 >${localizeDir(MSG.page.newSignal)}
@@ -363,7 +348,7 @@ export class WuiSignalAnalytics extends LitElement {
         </div>
         <span class="spacer"></span>
         ${
-          this.roleRun
+          this.mayRun
             ? html`<ix-button
                 ?disabled=${busy || !view.config.enabled}
                 @click=${() => void this.analyse(view)}
@@ -374,7 +359,7 @@ export class WuiSignalAnalytics extends LitElement {
             : nothing
         }
         ${
-          this.roleConfigure
+          this.mayConfigure
             ? html`
                 <ix-icon-button
                   ghost
@@ -669,7 +654,7 @@ export class WuiSignalAnalytics extends LitElement {
   // --- actions ---------------------------------------------------------------
 
   private async analyse(view: SignalView): Promise<void> {
-    if (!this.roleRun) return;
+    if (!this.mayRun) return;
     await this.store.requestAnalysis(view.config, '');
     // Show "queued" at once: the manager's own status write follows within a
     // second, but a button that appears to do nothing until then reads as broken.
@@ -697,7 +682,7 @@ export class WuiSignalAnalytics extends LitElement {
   }
 
   private openDialog(config: SignalConfig | null): void {
-    if (!this.roleConfigure) return;
+    if (!this.mayConfigure) return;
     this.editing = config;
     this.dialogOpen = true;
   }

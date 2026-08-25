@@ -17,8 +17,8 @@ restart must find the world already in order rather than double it:
 project's ``_NGA_Group`` instances are listed, filtered to active non-alert
 groups (their ``_2`` redundancy twins excluded), and the one named ``EVENT`` is
 preferred when present — that is the group a fresh WinCC OA project ships with.
-The archive-config attribute values (DPCONFIG 45 / DPATTR 15) mirror the proven
-``wui-para`` archive logic; see ``libs/wui-audit-trail/src/audit-trail/dp-admin.ts``.
+The archive-config attribute values are the CTRL constants themselves:
+DPCONFIG 45 (``_archive``) and DPATTR 15 (NGA value archive).
 
 **Backfill mechanics.** ``dp_set_timed_wait`` with past source times: values
 flow through the Event manager stamped with the instant they *describe*, and NGA

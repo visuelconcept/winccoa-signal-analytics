@@ -27,8 +27,8 @@
  * Emits `wui:apply` with the edited configuration, `wui:cancel` otherwise. The
  * dialog never writes anything itself — the page owns persistence.
  */
-import '@visuelconcept/wui-kit/ui/wui-dp-input.js';
-import { dialogCore } from '@visuelconcept/wui-kit/ui/dialog-styles.js';
+import './sa-dp-input.js';
+import { dialogCore } from './dialog-styles.js';
 import { IXCoreStyles } from '@wincc-oa/wui-shared/styles/ix-core.js';
 import {
   LitElement,

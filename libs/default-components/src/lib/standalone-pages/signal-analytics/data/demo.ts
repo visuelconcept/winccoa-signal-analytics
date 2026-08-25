@@ -5,7 +5,8 @@
  * The offline demonstration: two configured signals and findings for them.
  *
  * Used only when there is no writable backend (`SignalStore.offline`) — a
- * developer's browser, or a deployment without `wui-para`. The page then shows
+ * developer's browser, or a project whose Python manager has never run. The
+ * page then shows
  * the whole interface with plausible content instead of an empty list plus an
  * error, which is what makes it reviewable before a project exists.
  *

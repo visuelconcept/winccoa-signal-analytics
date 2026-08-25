@@ -1,0 +1,126 @@
+// Menu configuration for WinCC OA Dashboard
+//
+// Permission types: connected, disconnected, canEdit, canPublish, canWrite
+// Uses OR logic: item visible if user has ANY listed permission
+{
+  "entries": [
+    // --- Redirect routes (hidden from menu, route only) ---
+    {
+      "path": "/",
+      "redirect": "/dashboard",
+      "hidden": true
+    },
+    {
+      "path": "/auth",
+      "redirect": "/login",
+      "hidden": true
+    },
+    {
+      "path": "/data/dashboard-wc/index.html",
+      "redirect": "/dashboard",
+      "hidden": true
+    },
+
+    // --- Menu items ---
+    {
+      // Login menu item - only visible when disconnected
+      "title": "WUI_General.Paths./login",
+      "icon": "log-in",
+      "path": "/login",
+      "permission": ["disconnected"]
+    },
+    {
+      // Menu generator for favorite dashboards
+      // Component must be imported in webui-app-ix.ts
+      // Renders dynamic menu items for user's favorites
+      "generator": "wui-dashboard-favorites-menu",
+      "path": "",
+      "permission": ["connected"]
+    },
+    {
+      // Dashboard overview - visible when connected
+      // routeGenerator triggers dashboard-routes.ts to create all /dashboard/* routes
+      "title": "WUI_General.Paths./dashboard/overview",
+      "icon": "card-layout",
+      "path": "/dashboard/overview",
+      "routeGenerator": "dashboard",
+      "permission": ["connected"]
+    },
+    {
+      // diagnosis page - always visible
+      "title": "WUI_General.App.Diagnosis.Overview.Headline",
+      "icon": "maintenance-info-filled",
+      "path": "/status",
+      "module": "/data/dashboard-wc/pages/diagnosis.js",
+      "routeId": "status",
+      "component": "wui-diagnosis"
+    },
+    {
+      // Signal Analytics - anomaly / recurring-shape discovery on process signals.
+      // Backed by signal_analytics_manager.py; the page reads and writes only DP
+      // values, so it needs no backend route. Requires a connected user; the
+      // Configure / Analyse actions gate themselves on canEdit / canWrite.
+      "title": {
+        "en_US": "Signal Analytics",
+        "fr": "Analyse de signaux",
+        "de_AT": "Signalanalyse"
+      },
+      "icon": "analysis",
+      "path": "/signal-analytics",
+      "module": "/data/dashboard-wc/pages/signal-analytics.js",
+      "routeId": "signal-analytics",
+      "component": "wui-signal-analytics",
+      "permission": ["connected"]
+    },
+    {
+      // External help link - always visible
+      "title": "WUI_General.Action.Help",
+      "icon": "question",
+      "url": "https://www.winccoa.com/documentation/WinCCOA/latest/en_US/index.html",
+      "target": "_blank",
+      "path": ""
+    }
+    // // --- Example pages ---
+    // // Each entry renders one web component page.
+    // // `params` matching `:placeholders` in `path` become component attributes.
+    // // `attributes` applies fixed component attributes (not from URL placeholders).
+    // , {
+    //   "title": { "en": "Siemens IX", "de": "Siemens IX" },
+    //   "icon": "library",
+    //   "path": "/winccoa/",
+    //   "attributes": {
+    //     "src": "https://ix.siemens.io",
+    //     "style": "width: 100%; height: 100%"
+    //   },
+    //   "component": "iframe"
+    // },
+    // {
+    //   "title": { "en": "Clock", "de": "Uhr" },
+    //   "icon": "clock",
+    //   "path": "/clock",
+    //   "attributes": { "style": "width: 100%; height: 100%" },
+    //   "component": "wui-clock"
+    // }
+    // {
+    //   // CNS Tree with slot-based dynamic routes
+    //   // Container persists with tree navigation, child routes render detail in slot
+    //   "title": { "en_US.utf8": "CNS Tree" },
+    //   "icon": "hierarchy",
+    //   "path": "/cns-tree",
+    //   "routeGenerator": "cns-tree",
+    //   "permission": ["connected"],
+    //   "attributes": {
+    //     "displayNameIncludes": "Traffic"
+    //   }
+    // },
+    // {
+    //   // File Tree example - similar to CNS Tree but with different route generator and data source
+    //   "title": { "en_US.utf8": "File Tree" },
+    //   "icon": "hierarchy",
+    //   "path": "/file-tree",
+    //   "routeGenerator": "file-tree",
+    //   "routeSource": "/data/dashboard-wc/sample-file-tree.json",
+    //   "permission": ["connected"]
+    // }
+  ]
+}

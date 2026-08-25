@@ -148,8 +148,7 @@ Four details decide whether that is correct rather than merely animated:
 
 - **Source time, not arrival time.** A `dpConnect` emission carries
   `{ dp, value }` and no timestamp, so `:_online.._stime` is subscribed
-  alongside the value (the pattern `wui-para`'s detail table already uses) and
-  each point sits where the process put it. Arrival time is the fallback for an
+  alongside the value, so each point sits where the process put it. Arrival time is the fallback for an
   element whose source time is unreadable.
 - **The tail is thrown away whenever the archive is re-read.** The two sources
   overlap by construction — the subscription starts before the read returns, and
@@ -289,17 +288,25 @@ therefore catch more than `ImportError`.
 
 ## What is not enforced server-side
 
-The `run` role gates the button. The manager itself acts on any `command` leaf
-that changes, whoever wrote it — it has no notion of the WebUI session. The
-practical control is that writing a `SignalAnalysis` datapoint requires WinCC OA
-write rights on it in the first place, and that creating one goes through the
-role-gated `/api/para` route. If a deployment needs the analysis trigger itself
-to be authorised, that check has to move into the manager (the `command` leaf
-already carries a `user` field for exactly that extension).
+`canWrite` gates the button, and the Event manager gates the write itself: a user
+without it cannot put anything on a `command` leaf, UI or no UI. What the manager
+does not do is ask *who* wrote a leaf it reads — it acts on any `command` that
+changes, whoever wrote it, because it has no notion of a WebUI session.
+
+Two consequences worth stating plainly:
+
+- a CTRL script or a PARA edit can trigger an analysis, and the manager will run
+  it — the `command` leaf carries a `user` field precisely so that a deployment
+  needing an authorisation check has somewhere to put it;
+- the same holds for the hub: any writer with `canWrite` on
+  `SignalAnalyticsHub.request` can have a `SigAnalysis_*` datapoint created or
+  deleted. The fence is the prefix, not the identity of the requester — the
+  manager will not touch a datapoint outside its own namespace, but it does not
+  ask who asked.
 
 ## Testing
 
-`backend/python/tests/test_signal_analytics.py` — 16 tests, no WinCC OA required:
+`backend/python/tests/test_signal_analytics.py` — 31 tests, no WinCC OA required:
 
 - the NumPy profile against a **brute-force implementation from the definition**;
 - a synthetic signal whose answer is known by construction (40 identical cycles,
@@ -310,14 +317,20 @@ already carries a `user` field for exactly that extension).
   unfamiliar one;
 - the whole service end to end against a `FakeManager` that records DP writes.
 
+The provisioning has its own tests in the same file, against a fake engineering
+manager: the name reduction (what WinCC OA would refuse never reaches
+`dp_create`), the prefix fence on `delete`, create-of-an-existing as a success,
+and an engineering failure surfacing as a readable `error` on `response` instead
+of an exception nobody sees.
+
 The page side has its own suite —
-`libs/wui-signal-analytics/src/signal-analytics/data/live-signal.spec.ts`,
-13 tests over the live tail: source-time plotting, the duplicated `answer`
+`libs/default-components/src/lib/standalone-pages/signal-analytics/data/live-signal.spec.ts`,
+14 tests over the live tail: source-time plotting, the duplicated `answer`
 emission, the non-numeric value, throttling without loss, switching element, and
 the failing subscription that must cost the tail and nothing else.
 
 ```bash
-cd libs/wui-signal-analytics && npx vitest run
+npx nx test default-components
 ```
 
 ```bash

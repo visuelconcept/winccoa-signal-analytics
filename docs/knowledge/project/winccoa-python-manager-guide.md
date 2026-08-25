@@ -41,13 +41,21 @@ What it is **not**, and this decides architectures:
 **So how does a page talk to Python?** Through datapoints. Give the module a DP
 type whose leaves are split by writer — the page writes the request leaves, the
 manager writes the answer leaves — and let `dpConnect` carry the changes both
-ways. `libs/wui-signal-analytics` + `backend/python/signal_analytics/` is the
-worked example; its contract is `protocol.py` on one side and `types.ts` on the
-other. Two rules make it safe:
+ways. `libs/default-components/src/lib/standalone-pages/signal-analytics*` +
+`backend/python/signal_analytics/` is the worked example; its contract is
+`protocol.py` on one side and `types.ts` on the other. Three rules make it safe:
 
 - **No leaf is written by both sides.** Otherwise a slow write races an answer.
 - **Every request carries a `requestId`** the manager echoes, so the page can
   tell this run's answers from the ones still sitting on the leaves.
+- **The manager engineers, the page never does.** `OaRxJsApi` has no `dpCreate`
+  and the standard webserver exposes no engineering route, so a page that needs
+  datapoints must ask for them: give the module one hub datapoint the manager
+  creates on start (`dp_type_create` / `dp_create`, see
+  `signal_analytics/provision.py`), have the page write requests on it, and fence
+  the manager to its own name prefix so a request can never reach an unrelated
+  datapoint. The hub's existence is also the page's liveness probe: no hub, no
+  manager.
 
 ---
 
@@ -194,6 +202,17 @@ complete to `:_online.._value`, writes to `:_original.._value`.
 | History | `dp_get_period(start, end, dpes, count=0)` |
 | History, large | `dp_get_period_split(...)` — loop until `chunk.progress == 100` |
 | Alert history | `alert_get_period(start, end, dpes)` |
+| **Engineering** (what a page cannot do) | `dp_type_create(definition)` / `dp_type_get` / `dp_types(pattern)`, `dp_create(name, type)`, `dp_delete(name)`, `dp_exists(dpe)` |
+
+The engineering calls are the reason a Python manager can back a page that needs
+datapoints of its own: the WebUI runtime API has none of them. `definition` is an
+``OaDpTypeDefinition`` tree (`from etm.wccoa.services.data import
+OaDpTypeDefinition, OaElementType`) — a STRUCTURE root plus one `add_leaf(name,
+OaElementType.STRING)` per leaf. Import it **lazily**, inside the function that
+creates the type, so the module stays importable (and testable) without a WinCC
+OA installation. `signal_analytics/provision.py` and `furnace_sim/provision.py`
+are both worked examples; make every path idempotent, because the manager runs it
+on every start.
 
 ### Callback arguments
 
@@ -307,8 +326,10 @@ deliberate act on the server. Treat it as such:
 5. Errors written to the status leaf, not only logged.
 6. `tools/specs.json`: `backend.pythonManagers`.
 7. Tests against a `FakeManager`, run with the released CPython.
-8. Application Security roles for anything the page can trigger — see
-   [`docs/wui-app-security/INTEGRATION.md`](../../wui-app-security/INTEGRATION.md).
+8. Permissions for anything the page can trigger: the runtime's own flags
+   (`canEdit` / `canWrite` from `WuiUserService`) plus the `permission` field of
+   the menu entry — and remember the Event manager enforces `canWrite` on the
+   write itself, which is the only enforcement a manager gets for free.
 9. Tell whoever deploys: **start the manager in the console**, nothing does it
    for them.
 

@@ -1,10 +1,20 @@
 # =============================================================================
 # WebUI Runtime Workspace .gitignore
 #
-# This repo holds the versioned sources of the Signal Analytics module
-# (libs/, backend/python/, docs/, tools/). The runtime dev workspace is
+# This repo versions the Signal Analytics module ONLY. The runtime workspace is
 # scaffolded IN PLACE by `webui-runtime-init` and stays untracked — see
 # DEVELOPMENT.md. This file must be self-contained.
+#
+# The module now lives where the runtime discovers pages by itself, INSIDE a
+# scaffolded directory:
+#
+#   libs/default-components/src/lib/standalone-pages/signal-analytics.ts   tracked
+#   libs/default-components/src/lib/standalone-pages/signal-analytics/     tracked
+#   everything else under libs/default-components/                         untracked
+#
+# Git tracks files, not directories, so that split needs no ignore rule: the
+# scaffold files are simply never added. `git status` therefore lists the whole
+# scaffold as untracked (`??`) — that is the intended steady state, not drift.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -124,13 +134,18 @@ tmp/
 # =============================================================================
 # Scaffolded WebUI-runtime workspace — PARTIAL ignore
 #
-# `webui-runtime-init` scaffolds the runtime workspace and `wire-workspace.mjs`
-# re-patches it. We can ONLY ignore scaffold files that NX DOES NOT READ:
-# nx EXCLUDES .gitignored paths from its project graph, so apps/, libs/*,
-# nx.json, package.json, project.json, tsconfig.base.json (and the eslint/
-# prettier/vitest configs) MUST stay visible — ignoring them breaks `nx build`.
-# Those scaffold files therefore remain untracked.
-# =============================================================================
+# `webui-runtime-init` scaffolds the runtime workspace; nothing patches it any
+# more (the page needs no wiring — see DEVELOPMENT.md). We can ONLY ignore
+# scaffold files that NX DOES NOT READ: nx EXCLUDES .gitignored paths from its
+# project graph, so apps/, libs/*, nx.json, package.json, project.json,
+# tsconfig.base.json (and the eslint/prettier/vitest configs) MUST stay visible —
+# ignoring them breaks `nx build`. Those scaffold files therefore remain
+# untracked rather than ignored.
+#
+# ONE scaffold file is tracked on purpose: apps/dashboard-wc/config/
+# menuconfig.jsonc. It carries the page's route and menu entry, and losing it to
+# a re-scaffold means losing the route. Re-check it after every re-scaffold.
+# ==============================================================================
 
 # Scaffolded docs (knowledge base + diagrams) — EXCEPT the guides this repo
 # versions itself (a parent-dir exclude cannot be re-included, so exclude

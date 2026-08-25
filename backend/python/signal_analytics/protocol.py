@@ -28,7 +28,8 @@ String DPE by a few hundred kilobytes. Findings carry absolute timestamps and so
 line up with the page's own curve by construction.
 
 The TypeScript mirror of these shapes is
-``libs/wui-signal-analytics/src/signal-analytics/types.ts`` — keep the two in
+``libs/default-components/src/lib/standalone-pages/signal-analytics/types.ts``
+— keep the two in
 step, they are one contract seen from either end.
 """
 
@@ -40,8 +41,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-#: DP type created by the page (through the PARA REST API) and read here.
+#: DP type of one configured signal. Created HERE — see :mod:`.provision`.
 DP_TYPE = "SignalAnalysis"
+
+#: Prefix of every per-signal datapoint (mirrored in ``types.ts``).
+DP_PREFIX = "SigAnalysis_"
 
 #: Leaves of :data:`DP_TYPE`.
 LEAF_NAME = "name"
@@ -50,6 +54,37 @@ LEAF_COMMAND = "command"
 LEAF_STATUS = "status"
 LEAF_RESULT = "result"
 LEAF_LIVE = "live"
+
+#: Leaves of :data:`DP_TYPE`, in the order the type declares them (mirrors
+#: ``LEAVES`` in ``types.ts``).
+LEAVES = (
+    LEAF_NAME,
+    LEAF_CONFIG,
+    LEAF_COMMAND,
+    LEAF_STATUS,
+    LEAF_RESULT,
+    LEAF_LIVE,
+)
+
+#: The provisioning hub: ONE datapoint of its own type, created by this manager.
+#: The page cannot create datapoints (the WebUI runtime API has no ``dpCreate``),
+#: so it writes what it wants engineered on ``request`` and reads the outcome on
+#: ``response``; ``info`` is this manager's identity card, and the page's only way
+#: to know a manager is running at all.
+HUB_DP_TYPE = "SignalAnalyticsHub"
+HUB_DP = "SignalAnalyticsHub"
+HUB_LEAF_REQUEST = "request"
+HUB_LEAF_RESPONSE = "response"
+HUB_LEAF_INFO = "info"
+HUB_LEAVES = (HUB_LEAF_REQUEST, HUB_LEAF_RESPONSE, HUB_LEAF_INFO)
+
+#: Protocol version of the hub exchange; bumped when the shape changes.
+HUB_VERSION = 1
+
+#: Datapoint names the page may ask for are bounded: WinCC OA rejects some
+#: characters outright, and an unbounded name is a way to make the Event manager
+#: refuse every later write on a datapoint the page believes it created.
+DP_NAME_MAX = 60
 
 #: Joint analyses are capped: every dimension multiplies the O(n²) work, and
 #: past a handful of signals the mean-aggregated profile dilutes any single
@@ -246,6 +281,107 @@ def parse_command(raw: str) -> Command | None:
         issued_at=str(data.get("issuedAt") or ""),
         user=str(data.get("user") or ""),
     )
+
+
+@dataclass
+class HubRequest:
+    """A ``request`` leaf: a datapoint the page wants engineered.
+
+    ``op`` is validated against the two operations that exist; anything else is
+    rejected rather than guessed, because the effect is an engineering change on a
+    live system.
+    """
+
+    request_id: str
+    op: str
+    dp: str = ""
+    config_raw: str = ""
+    issued_at: str = ""
+    user: str = ""
+
+    @property
+    def is_create(self) -> bool:
+        return self.op == "create"
+
+    @property
+    def is_delete(self) -> bool:
+        return self.op == "delete"
+
+
+def safe_dp_name(raw: str) -> str:
+    """A page-proposed datapoint name, reduced to something safe to create.
+
+    Everything WinCC OA would refuse (or that would make later element addressing
+    ambiguous) is dropped: only letters, digits, ``_`` and ``-`` survive, the
+    module's own prefix is enforced, and the result is length-bounded. Returns
+    ``""`` when nothing usable is left — the caller then refuses the request
+    rather than creating a datapoint under a name the page did not ask for.
+    """
+    name = str(raw or "").strip()
+    if name.startswith(DP_PREFIX):
+        name = name[len(DP_PREFIX) :]
+    kept = "".join(char for char in name if char.isalnum() or char in "_-")
+    kept = kept.strip("-_")[: DP_NAME_MAX - len(DP_PREFIX)]
+    return f"{DP_PREFIX}{kept}" if kept else ""
+
+
+def parse_hub_request(raw: str) -> HubRequest | None:
+    """Parse a ``request`` leaf. ``None`` when it holds nothing actionable."""
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    op = str(data.get("op") or "").strip().lower()
+    if op not in ("create", "delete"):
+        return None
+    request_id = str(data.get("requestId") or "").strip()
+    if request_id == "":
+        return None
+    config = data.get("config")
+    proposed = ""
+    if isinstance(config, dict):
+        proposed = str(config.get("dp") or "")
+    dp = safe_dp_name(str(data.get("dp") or "") or proposed)
+    return HubRequest(
+        request_id=request_id,
+        op=op,
+        dp=dp,
+        config_raw=json.dumps(config, separators=(",", ":")) if isinstance(config, dict) else "",
+        issued_at=str(data.get("issuedAt") or ""),
+        user=str(data.get("user") or ""),
+    )
+
+
+def hub_response_payload(
+    request_id: str, op: str, ok: bool, dp: str, error: str = ""
+) -> str:
+    """The ``response`` leaf: the outcome of one request, echoing its id."""
+    payload: dict[str, Any] = {
+        "requestId": request_id,
+        "op": op,
+        "ok": ok,
+        "dp": dp,
+        "at": now_iso(),
+    }
+    if error:
+        payload["error"] = error
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def hub_info_payload(runtime: str, engines: dict[str, Any] | None = None) -> str:
+    """The ``info`` leaf: what this manager is, written once on start."""
+    payload: dict[str, Any] = {
+        "version": HUB_VERSION,
+        "dpType": DP_TYPE,
+        "prefix": DP_PREFIX,
+        "startedAt": now_iso(),
+        "runtime": runtime,
+    }
+    if engines:
+        payload["engines"] = engines
+    return json.dumps(payload, separators=(",", ":"))
 
 
 @dataclass

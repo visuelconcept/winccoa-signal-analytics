@@ -19,7 +19,14 @@
  * having to ship a copy of it through a String datapoint.
  */
 
-/** DP type backing one configured signal. Created on demand by `data/store.ts`. */
+/**
+ * DP type backing one configured signal.
+ *
+ * Created by the **manager**, not by the page: creating a datapoint or a DP type
+ * is an engineering operation, and the WebUI runtime API (`OaRxJsApi`) offers no
+ * such call — it reads, subscribes and writes values, nothing more. So the page
+ * asks, over {@link HUB_DP}, and the manager engineers.
+ */
 export const DP_TYPE = 'SignalAnalysis';
 
 /** Leaves of {@link DP_TYPE}, in the order the type declares them. */
@@ -31,6 +38,61 @@ export const LEAVES = [
   'result',
   'live'
 ] as const;
+
+/** Prefix of every per-signal datapoint, so they group in PARA and in the page. */
+export const DP_PREFIX = 'SigAnalysis_';
+
+/**
+ * The manager's provisioning hub: ONE datapoint, of its own type, created by the
+ * manager on start.
+ *
+ * It exists because the page cannot create datapoints. `request` carries what the
+ * page wants engineered, `response` the outcome, `info` the manager's own
+ * identity card — which is also how the page knows a manager is running at all
+ * (no manager, no hub, and the page says it is in demonstration mode).
+ */
+export const HUB_DP_TYPE = 'SignalAnalyticsHub';
+
+/** The single instance of {@link HUB_DP_TYPE}. */
+export const HUB_DP = 'SignalAnalyticsHub';
+
+/** Leaves of {@link HUB_DP_TYPE}, in the order the type declares them. */
+export const HUB_LEAVES = ['request', 'response', 'info'] as const;
+
+/** Protocol version of the hub exchange; bumped when the shape changes. */
+export const HUB_VERSION = 1;
+
+/** What the page writes on `request` to have a datapoint engineered. */
+export interface HubRequest {
+  requestId: string;
+  op: 'create' | 'delete';
+  issuedAt: string;
+  user: string;
+  /** `create` — the signal to provision. Its `dp` is assigned by the manager. */
+  config?: SignalConfig;
+  /** `delete` — the datapoint to drop. */
+  dp?: string;
+}
+
+/** What the manager writes on `response`, echoing the request id. */
+export interface HubResponse {
+  requestId: string;
+  op: 'create' | 'delete' | '';
+  ok: boolean;
+  /** The datapoint created, or the one deleted. */
+  dp: string;
+  error?: string;
+  at: string;
+}
+
+/** What the manager writes on `info` when it starts. */
+export interface HubInfo {
+  version: number;
+  dpType: string;
+  prefix: string;
+  startedAt: string;
+  engines?: Record<string, EngineAvailability>;
+}
 
 /**
  * Which analysis back-end runs on the server.

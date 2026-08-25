@@ -47,11 +47,6 @@ export const MSG = {
       'Mode démonstration : aucun backend joignable, rien n’est enregistré et les résultats ci-dessous sont fictifs.',
       'Demonstrationsmodus: kein Backend erreichbar, nichts wird gespeichert und die Ergebnisse unten sind erfunden.'
     ),
-    roleForbidden: ml(
-      'Your groups do not hold the “view” role of this page.',
-      'Vos groupes ne possèdent pas le rôle « consulter » de cette page.',
-      'Ihre Gruppen besitzen die Rolle „Ansehen“ dieser Seite nicht.'
-    ),
     managerSilent: ml(
       'The Python manager has never answered on this signal. Check that signal_analytics_manager.py is started in the console.',
       'Le manager Python n’a jamais répondu sur ce signal. Vérifiez que signal_analytics_manager.py est démarré dans la console.',
@@ -346,6 +341,24 @@ export const MSG = {
       'Delete this signal?',
       'Supprimer ce signal ?',
       'Dieses Signal löschen?'
+    )
+  },
+  /** Defaults of the page-local confirm dialog (`ui/sa-confirm-dialog.ts`). */
+  confirmDialog: {
+    heading: ml(
+      'Confirm deletion',
+      'Confirmer la suppression',
+      'Löschen bestätigen'
+    ),
+    confirm: ml('Delete', 'Supprimer', 'Löschen'),
+    cancel: ml('Cancel', 'Annuler', 'Abbrechen')
+  },
+  /** Labels of the page-local datapoint picker (`ui/sa-dp-input.ts`). */
+  dpInput: {
+    browse: ml(
+      'Search for a datapoint',
+      'Rechercher un datapoint',
+      'Datenpunkt suchen'
     )
   }
 } as const;

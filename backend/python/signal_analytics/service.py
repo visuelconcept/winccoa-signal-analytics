@@ -21,6 +21,13 @@ would take cores away from the processes that actually run the plant. A queued
 job replaces an older pending job for the same signal, so hammering "Analyse"
 costs one run, not ten.
 
+**The hub** is the fourth path, and the only one that engineers anything: the
+page cannot create datapoints, so it writes what it wants on
+``SignalAnalyticsHub.request`` and this service creates or deletes it — see
+:mod:`.provision`. Requests are executed on the callback thread: they are two
+Event-manager calls, not a computation, and serialising them behind the analysis
+worker would make the page wait on an unrelated job.
+
 Everything the page sees is written to that signal's own leaves: ``status``
 always, ``result`` on success, ``live`` on the throttle. Errors are written the
 same way — a failed analysis is a state to display, not a silent log line.
@@ -40,8 +47,11 @@ import numpy as np
 
 from .analysis import HistoryError, prepare, read_history
 from .engines import engine_availability, resolve_engine
+from .provision import ensure_hub, handle as handle_hub_request
 from .protocol import (
     DP_TYPE,
+    HUB_DP,
+    HUB_LEAF_REQUEST,
     LEAF_COMMAND,
     LEAF_CONFIG,
     LEAF_LIVE,
@@ -52,6 +62,7 @@ from .protocol import (
     Status,
     parse_command,
     parse_config,
+    parse_hub_request,
     result_payload,
 )
 from .realtime import LiveWatch
@@ -96,6 +107,10 @@ class SignalAnalyticsService:
         self._pending: set[str] = set()
         self._stopping = threading.Event()
         self._threads: list[threading.Thread] = []
+        self._hub_connect: int | None = None
+        #: Hub request ids already executed — `dp_connect(answer=True)` replays the
+        #: leaf on every (re)start, and a replayed request must not run twice.
+        self._hub_seen: set[str] = set()
         self._runtime = (
             f"python {platform.python_version()} / numpy {np.__version__} on {platform.node()}"
         )
@@ -103,6 +118,7 @@ class SignalAnalyticsService:
     # -- lifecycle -------------------------------------------------------------
 
     def start(self) -> None:
+        self._start_hub()
         for target, name in (
             (self._discovery_loop, "discovery"),
             (self._worker_loop, "analysis"),
@@ -114,12 +130,62 @@ class SignalAnalyticsService:
 
     def stop(self) -> None:
         self._stopping.set()
+        if self._hub_connect is not None:
+            self._safe_disconnect(self._hub_connect)
+            self._hub_connect = None
         with self._lock:
             for signal in self._signals.values():
                 self._unsubscribe(signal)
             self._signals.clear()
         for thread in self._threads:
             thread.join(timeout=5.0)
+
+    # -- the hub ---------------------------------------------------------------
+
+    def _start_hub(self) -> None:
+        """Provision the hub and follow its ``request`` leaf.
+
+        A manager that cannot provision must still analyse: an installation where
+        the types already exist but this manager lacks the rights to create them
+        would otherwise lose the whole service over the one thing it cannot do.
+        The failure is logged; the page then stays in demonstration mode, which is
+        the honest reading of "no hub".
+        """
+        try:
+            ensure_hub(self._manager, engine_availability())
+        except Exception:
+            logger.exception("hub provisioning failed — the page will see no manager")
+            return
+        try:
+            self._hub_connect = self._manager.dp_connect(
+                self._on_hub_request, [f"{HUB_DP}.{HUB_LEAF_REQUEST}"], True
+            )
+        except Exception:
+            logger.exception("could not subscribe to the hub request leaf")
+
+    def _on_hub_request(self, event: Any) -> None:
+        """Execute one page request. The initial replay is adopted, not acted on."""
+        if getattr(event, "is_answer", False):
+            raw = self._first_value(event)
+            request = parse_hub_request(str(raw or ""))
+            if request is not None:
+                self._hub_seen.add(request.request_id)
+            return
+        raw = self._first_value(event)
+        request = parse_hub_request(str(raw or ""))
+        if request is None:
+            return
+        if request.request_id in self._hub_seen:
+            return
+        self._hub_seen.add(request.request_id)
+        handle_hub_request(self._manager, request)
+        # A create means a new datapoint: reconcile now rather than up to
+        # DISCOVERY_INTERVAL_S later, so the page's first read finds it subscribed.
+        if request.is_create:
+            try:
+                self._reconcile()
+            except Exception:
+                logger.exception("reconcile after hub create failed")
 
     # -- discovery -------------------------------------------------------------
 

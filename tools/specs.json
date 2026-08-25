@@ -1,10 +1,10 @@
 [
   {
     "page": "signal-analytics",
-    "name": "@visuelconcept/wui-signal-analytics",
+    "name": "wui-signal-analytics",
     "title": "Signal Analytics",
     "tier": 3,
-    "description": "Signal Analytics page (/signal-analytics): configure the datapoint elements to analyse, then show the anomalies and recurring shapes found by the signal_analytics_manager.py Python manager (matrix profile — built-in NumPy or STUMPY — or Chronos forecasting), over the archived history and continuously on live values. Joint (multivariate) analysis over several elements via mSTAMP: anomalies that only exist in the correlation between signals. Ships furnace_sim_manager.py, a batch-furnace simulator that provisions three NGA-archived elements and injects anomalies on a published schedule for verification. Page and manager exchange JSON through one SignalAnalysis datapoint per signal (no HTTP route: the WinCC OA Python API hosts no MSA vRPC service). Datapoint creation reuses the /api/para endpoints, so the para backend must be deployed too.",
+    "description": "Signal Analytics page (/signal-analytics): configure the datapoint elements to analyse, then show the anomalies and recurring shapes found by the signal_analytics_manager.py Python manager (matrix profile — built-in NumPy or STUMPY — or Chronos forecasting), over the archived history and continuously on live values. Joint (multivariate) analysis over several elements via mSTAMP: anomalies that only exist in the correlation between signals. Ships furnace_sim_manager.py, a batch-furnace simulator that provisions three NGA-archived elements and injects anomalies on a published schedule for verification. Page and manager exchange JSON through one SignalAnalysis datapoint per signal (no HTTP route: the WinCC OA Python API hosts no MSA vRPC service). The manager creates its own DP types and datapoints, asked over a SignalAnalyticsHub datapoint, so no other backend module is required.",
     "backend": {
       "pythonManagers": [
         "signal_analytics_manager.py",

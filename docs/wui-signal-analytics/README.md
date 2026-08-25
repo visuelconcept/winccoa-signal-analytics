@@ -1,4 +1,4 @@
-# @visuelconcept/wui-signal-analytics — source module (Tier 3)
+# Signal Analytics — the standalone page and its manager
 
 **Signal Analytics** page for a WinCC OA WebUI dashboard: **`/signal-analytics`**.
 
@@ -38,8 +38,7 @@ Python API is a scripting API — it hosts no vRPC service**, so that pattern ha
 no Python counterpart.
 
 The bridge is therefore the datapoint system itself. One datapoint per configured
-signal (type `SignalAnalysis`, auto-created), six String leaves carrying JSON,
-split by writer:
+signal (type `SignalAnalysis`), six String leaves carrying JSON, split by writer:
 
 ```
 page   ──▶  name · config · command          the request
@@ -47,9 +46,27 @@ manager ──▶ status · result · live           the answer      (delivered 
 ```
 
 No leaf is written by both sides, so neither can clobber the other, and the page
-gets progress and results pushed with no polling anywhere. The contract is
-[`types.ts`](../../libs/wui-signal-analytics/src/signal-analytics/types.ts) on
-one side and
+gets progress and results pushed with no polling anywhere.
+
+**Who creates those datapoints.** The manager. A browser cannot: `OaRxJsApi`
+reads, subscribes and writes *values* — it has no `dpCreate` — and the standard
+webserver exposes no engineering route. So the manager owns one more datapoint,
+`SignalAnalyticsHub`, created on its own start:
+
+```
+page   ──▶  request      {op: create|delete, config|dp, requestId}
+manager ──▶ response     {requestId, ok, dp, error}
+manager ──▶ info         the manager's identity card — what the page probes
+```
+
+The manager creates and deletes nothing outside its own `SigAnalysis_` prefix,
+and a request whose name reduces to nothing usable is refused with a readable
+reason rather than guessed at. No hub at all means no manager ever ran here,
+which is exactly when the page announces demonstration mode.
+
+The contract is
+[`types.ts`](../../libs/default-components/src/lib/standalone-pages/signal-analytics/types.ts)
+on one side and
 [`protocol.py`](../../backend/python/signal_analytics/protocol.py) on the other.
 
 **The samples are never sent back.** The page reads the analysed period from the
@@ -94,9 +111,12 @@ To verify the manager came up, look for its startup line in
 - **NumPy** in that interpreter (`pip install numpy`). It is the only hard
   third-party dependency; `stumpy` and `chronos-forecasting` are optional and
   detected at runtime.
-- **`@visuelconcept/wui-para`** (the `/api/para` route) — the page creates the
-  `SignalAnalysis` DP type and its datapoints through it. Without it the page
-  still opens, in **demonstration mode** on fabricated findings, and says so.
+- **No other WebUI module.** The standard webserver (`webserver/run.js`) serves
+  everything the page needs, and the manager engineers its own datapoints. Until
+  the manager has run once against the project, the page still opens — in
+  **demonstration mode** on fabricated findings — and says so.
+- **Engineering rights for the manager** in the project it runs in: it creates
+  two DP types and one datapoint per configured signal.
 - **The analysed elements must be archived.** The manager reads history with
   `dp_get_period_split` over `:_original.._value`; an element with no archive
   yields *"no archived numeric value in the requested period"*.
@@ -173,37 +193,42 @@ Configure the demo signal with the three elements
 `System1:SigSim_Furnace01.temperature` / `.power` / `.gasFlow`, window ≈ one
 cycle (120 samples at the 5 s step).
 
-## Application Security
+## Permissions
 
-Three roles, declared in
-[`app-security.roles.json`](../../libs/wui-signal-analytics/src/app-security.roles.json)
-and open until an admin assigns groups:
+The runtime's own model — no custom role datapoint:
 
-| Role | Gates |
+| Gate | Mechanism |
 | --- | --- |
-| `view` | seeing the page at all |
-| `configure` | creating, editing and deleting signals (**creates datapoints**) |
-| `run` | asking the manager to analyse (**CPU work on the server**) |
+| seeing the page at all | `"permission": ["connected"]` on the menu entry, applied by the shell's route guard |
+| creating, editing, deleting signals | `canEdit` |
+| asking the manager to analyse (**CPU work on the server**) | `canWrite` |
 
-Note the honest limitation: the write path is the PARA REST API, so the *server-side*
-enforcement on datapoint creation is that route's. The `run` role gates the UI;
-a `command` leaf written by any other means is still honoured by the manager —
-see [NOTES.md](./NOTES.md#what-is-not-enforced-server-side).
+Both flags come from `WuiUserService`
+([`data/permissions.ts`](../../libs/default-components/src/lib/standalone-pages/signal-analytics/data/permissions.ts)).
+
+`canWrite` is also what the Event manager itself enforces on every `dpSet` the
+page performs, so the write path is genuinely gated server-side and not only in
+the UI. What remains un-enforced is *intent*: a `command` leaf written by any
+other means — a CTRL script, PARA — is still honoured by the manager. See
+[NOTES.md](./NOTES.md#what-is-not-enforced-server-side).
 
 ## Contents
 
 ```
-libs/wui-signal-analytics/
-  src/signal-analytics.ts                the page (shell, list, detail, orchestration)
-  src/signal-analytics/types.ts          the DP contract, page side
-  src/signal-analytics/data/             store (DP I/O + dpConnect), history (dpGetPeriod), demo
-  src/signal-analytics/ui/               chart, findings lists, live panel, config dialog
-  src/app-security.roles.json            view / configure / run
+libs/default-components/src/lib/standalone-pages/
+  signal-analytics.ts                    the page (shell, list, detail, orchestration)
+  signal-analytics/types.ts              the DP contract, page side
+  signal-analytics/data/                 store (DP I/O + hub round trips), history
+                                         (dpGetPeriod), permissions, demo
+  signal-analytics/ui/                   chart, findings lists, live panel, config
+                                         dialog, confirm dialog, DP picker
+apps/dashboard-wc/config/menuconfig.jsonc  the route + menu entry
 
 backend/python/
   signal_analytics_manager.py            entry script (config/progs)
   signal_analytics/protocol.py           the DP contract, manager side
-  signal_analytics/service.py            discovery, job queue, DP writes
+  signal_analytics/service.py            discovery, job queue, DP writes, hub requests
+  signal_analytics/provision.py          the DP types, the hub, create/delete
   signal_analytics/analysis.py           archive read + uniform-grid resampling
   signal_analytics/matrix_profile.py     STOMP / MASS in NumPy
   signal_analytics/realtime.py           the rolling live watch

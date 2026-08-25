@@ -4,20 +4,27 @@
 /**
  * Persistence and live wiring for the configured signals.
  *
- * One WinCC OA datapoint per signal, of the auto-created type `SignalAnalysis`.
- * Writes go through the PARA REST API (`/api/para/dp/*`) rather than through the
- * WebSocket: creating a type or a datapoint is an engineering operation the
- * runtime API does not offer, and the same route already carries the
- * server-side role check. Reads and subscriptions go through `OaRxJsApi`, which
- * is what makes the manager's answers arrive without polling.
+ * One WinCC OA datapoint per signal, of type `SignalAnalysis`. Everything this
+ * module does goes through `OaRxJsApi` — `dpGet`, `dpNames`, `dpConnect`,
+ * `dpSet` — and through nothing else: no HTTP route, no REST engineering API.
+ * That is the whole point of the design.
+ *
+ * **Why a hub.** The runtime API has no `dpCreate`: a browser can read, subscribe
+ * and write values, but not engineer datapoints. So the page does not create its
+ * datapoints — it asks. The manager owns one hub datapoint ({@link HUB_DP}),
+ * created on its own start; the page writes a {@link HubRequest} on `request` and
+ * reads the outcome on `response`. Creating and deleting a signal are therefore
+ * round trips to the manager, while editing one is a plain `dpSet` on the leaves
+ * the page owns.
  *
  * The subscription is per datapoint, not one batch over all of them: a
  * `dpConnect` fails as a whole as soon as one name in its array is unresolvable
  * (see the oa-rx-js-api README), and this page's names come and go as signals
- * are created and deleted. Isolated, a datapoint deleted from PARA mid-session
- * costs its own tile and nothing else.
+ * are created and deleted. Isolated, a datapoint deleted mid-session costs its
+ * own tile and nothing else.
  *
- * With no backend — a developer's browser, a deployment without `wui-para` — the
+ * With no manager behind the page — a developer's browser, or a project where
+ * `signal_analytics_manager.py` was never started — the hub does not exist, the
  * store flips to {@link SignalStore.offline} and serves an in-memory demo list,
  * so the page is explorable without a project behind it. Nothing is persisted in
  * that mode and the page says so.
@@ -26,29 +33,32 @@ import { OaRxJsApi } from '@etm-professional-control/oa-rx-js-api';
 import { firstValueFrom, Subscription } from 'rxjs';
 import { container } from 'tsyringe';
 import {
+  DP_PREFIX,
   DP_TYPE,
-  LEAVES,
+  HUB_DP,
   withDefaults,
   type AnalysisResult,
+  type HubInfo,
+  type HubRequest,
+  type HubResponse,
   type LiveState,
   type SignalConfig,
   type SignalStatus
 } from '../types.js';
 import { demoSignals } from './demo.js';
-
-const CREATE_TYPE_URL = '/api/para/dptype/create';
-const TYPE_URL = '/api/para/dptype';
-const CREATE_DP_URL = '/api/para/dp/create';
-const DP_SET_URL = '/api/para/dp/set';
-const DELETE_DP_BASE = '/api/para/dp';
-
-/** Prefix of every backing datapoint, so they group in PARA and in the browser. */
-const DP_PREFIX = 'SigAnalysis_';
+import { currentUserName } from './permissions.js';
 
 const ID_RADIX = 36;
 const SLUG_MAX = 28;
-/** `/api/para/dptype/create` answers 400 when the type is already there. */
-const HTTP_BAD_REQUEST = 400;
+
+/**
+ * How long the page waits for the manager to answer a create/delete.
+ *
+ * Generous on purpose: the manager may be busy analysing when the request lands,
+ * and the alternative to waiting is telling the user a signal was not created
+ * while the manager is in the middle of creating it.
+ */
+const ENGINEER_TIMEOUT_MS = 15_000;
 
 /** What the manager wrote about one signal, as it arrives. */
 export interface ManagerUpdate {
@@ -56,14 +66,6 @@ export interface ManagerUpdate {
   status?: SignalStatus;
   result?: AnalysisResult;
   live?: LiveState;
-}
-
-function jsonPost(body: object): RequestInit {
-  return {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  };
 }
 
 /** Drop a leading `System1:` so names compare against what this page wrote. */
@@ -118,11 +120,14 @@ function slug(label: string): string {
 }
 
 export class SignalStore {
-  /** True when nothing is persisted (no backend, or no write rights). */
+  /** True when nothing is persisted (no manager, or no write rights). */
   offline = false;
 
   private readonly api = this.resolveApi();
-  private typeReady = false;
+
+  /** The manager's identity card, once read. Absent while offline. */
+  private info: HubInfo | null = null;
+  private probed = false;
   private memory: SignalConfig[] | null = null;
 
   /** Live subscriptions, one per followed datapoint. */
@@ -131,7 +136,7 @@ export class SignalStore {
   // -- reading ----------------------------------------------------------------
 
   async list(): Promise<SignalConfig[]> {
-    await this.ensureType();
+    await this.probe();
     if (this.offline || !this.api) return this.mem();
     try {
       const names = (await firstValueFrom(
@@ -170,8 +175,20 @@ export class SignalStore {
     }
   }
 
+  /** The manager's identity card, or null while offline (nothing probed yet). */
+  managerInfo(): HubInfo | null {
+    return this.info;
+  }
+
   // -- writing ----------------------------------------------------------------
 
+  /**
+   * Have the manager engineer a datapoint for *config*, then write the config on it.
+   *
+   * The id is computed page-side so the datapoint name is readable
+   * (`SigAnalysis_furnace-temp-l7k3n`), but the manager is free to answer with a
+   * different one — what it reports on `response` is what the page adopts.
+   */
   async create(config: SignalConfig): Promise<SignalConfig> {
     const id = `${slug(config.label || config.dpes[0] || '')}-${Date.now().toString(ID_RADIX)}`;
     const created: SignalConfig = { ...config, id, dp: DP_PREFIX + id };
@@ -179,12 +196,18 @@ export class SignalStore {
       this.mem().push(created);
       return created;
     }
-    await this.send(
-      CREATE_DP_URL,
-      jsonPost({ dpName: created.dp, dpType: DP_TYPE })
-    );
-    await this.writeConfig(created);
-    return created;
+    const answer = await this.engineer({
+      requestId: `c-${Date.now().toString(ID_RADIX)}`,
+      op: 'create',
+      issuedAt: new Date().toISOString(),
+      user: currentUserName(),
+      config: created
+    });
+    const persisted: SignalConfig = { ...created, dp: answer.dp || created.dp };
+    // The manager writes the config it was handed; write it again from here so
+    // an older manager that only creates the datapoint still ends up correct.
+    await this.writeConfig(persisted);
+    return persisted;
   }
 
   async save(config: SignalConfig): Promise<void> {
@@ -205,10 +228,13 @@ export class SignalStore {
     }
     const dp = config.dp ?? DP_PREFIX + config.id;
     this.unwatch(dp);
-    await this.send(
-      `${DELETE_DP_BASE}/${encodeURIComponent(dp)}?dpType=${encodeURIComponent(DP_TYPE)}`,
-      { method: 'DELETE' }
-    );
+    await this.engineer({
+      requestId: `d-${Date.now().toString(ID_RADIX)}`,
+      op: 'delete',
+      issuedAt: new Date().toISOString(),
+      user: currentUserName(),
+      dp
+    });
   }
 
   /**
@@ -222,16 +248,13 @@ export class SignalStore {
     const requestId = `r-${Date.now().toString(ID_RADIX)}`;
     if (this.offline) return requestId;
     const dp = config.dp ?? DP_PREFIX + config.id;
-    await this.send(
-      DP_SET_URL,
-      jsonPost({
-        dpeName: `${dp}.command`,
-        value: JSON.stringify({
-          requestId,
-          action: 'analyze',
-          issuedAt: new Date().toISOString(),
-          user
-        })
+    await this.write(
+      `${dp}.command`,
+      JSON.stringify({
+        requestId,
+        action: 'analyze',
+        issuedAt: new Date().toISOString(),
+        user: user || currentUserName()
       })
     );
     return requestId;
@@ -278,7 +301,98 @@ export class SignalStore {
     this.watches.clear();
   }
 
-  // -- type bootstrap ---------------------------------------------------------
+  // -- the hub ----------------------------------------------------------------
+
+  /**
+   * Is a manager there? Read its identity card once.
+   *
+   * `dpGet` on a datapoint that does not exist rejects, which is exactly the
+   * answer wanted: no hub means no manager has ever run against this project, so
+   * nothing the page writes would be read by anyone — demonstration mode.
+   */
+  private async probe(): Promise<void> {
+    if (this.probed) return;
+    this.probed = true;
+    if (!this.api) {
+      this.offline = true;
+      return;
+    }
+    try {
+      const raw = await firstValueFrom(this.api.dpGet(`${HUB_DP}.info`));
+      const info = parse<HubInfo>(raw);
+      if (!info) {
+        this.offline = true;
+        return;
+      }
+      this.info = info;
+    } catch {
+      this.offline = true;
+    }
+  }
+
+  /**
+   * One round trip through the hub: write the request, wait for its answer.
+   *
+   * The response subscription is opened **before** the request is written, so a
+   * manager that answers instantly cannot be missed. `dpConnect(…, true)` replays
+   * whatever is currently on the leaf, which is normally the *previous* answer —
+   * hence the `requestId` filter rather than "the next emission wins".
+   */
+  private async engineer(request: HubRequest): Promise<HubResponse> {
+    const api = this.api;
+    if (!api) throw new Error('no runtime API');
+
+    return new Promise<HubResponse>((resolve, reject) => {
+      // One record so the teardown can be written before the handles exist —
+      // the subscription's own callback has to be able to close it.
+      const pending: {
+        subscription?: Subscription;
+        timer?: ReturnType<typeof setTimeout>;
+      } = {};
+
+      const finish = (): void => {
+        if (pending.timer !== undefined) clearTimeout(pending.timer);
+        pending.subscription?.unsubscribe();
+      };
+
+      const fail = (error: unknown): void => {
+        finish();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      };
+
+      const consider = (answer: HubResponse | undefined): void => {
+        if (!answer || answer.requestId !== request.requestId) return;
+        finish();
+        if (answer.ok) resolve(answer);
+        else reject(new Error(answer.error || `${request.op} refused`));
+      };
+
+      pending.timer = setTimeout(
+        () =>
+          fail(
+            new Error(
+              `the manager did not answer ${request.op} within ${ENGINEER_TIMEOUT_MS} ms`
+            )
+          ),
+        ENGINEER_TIMEOUT_MS
+      );
+
+      pending.subscription = api
+        .dpConnect(`${HUB_DP}.response`, true)
+        .subscribe({
+          next: () => {
+            void firstValueFrom(api.dpGet(`${HUB_DP}.response`)).then((raw) =>
+              consider(parse<HubResponse>(raw))
+            );
+          },
+          error: fail
+        });
+
+      void this.write(`${HUB_DP}.request`, JSON.stringify(request)).catch(fail);
+    });
+  }
+
+  // -- leaves the page owns ---------------------------------------------------
 
   private async read(dp: string): Promise<SignalConfig | undefined> {
     if (!this.api) return undefined;
@@ -298,73 +412,24 @@ export class SignalStore {
 
   private async writeConfig(config: SignalConfig): Promise<void> {
     const dp = config.dp ?? DP_PREFIX + config.id;
-    await this.send(
-      DP_SET_URL,
-      jsonPost({ dpeName: `${dp}.name`, value: config.label })
-    );
     // `dpe` mirrors the first element so a config written by this page stays
     // readable to the pre-multivariate manager (and to a human in PARA).
     const payload = { ...config, dpe: config.dpes[0] ?? '' };
-    await this.send(
-      DP_SET_URL,
-      jsonPost({ dpeName: `${dp}.config`, value: JSON.stringify(payload) })
-    );
+    await this.write(`${dp}.name`, config.label);
+    await this.write(`${dp}.config`, JSON.stringify(payload));
   }
 
   /**
-   * Create the `SignalAnalysis` type on first use.
+   * Write one leaf, failing loudly.
    *
-   * Six flat String leaves: JSON in strings rather than a typed structure,
-   * because the shape of a result changes with the engine and with the version
-   * of this page, and a DP type is not something a page should be migrating on a
-   * live system. A 400 means it already exists — that is a success, not a fault.
+   * `dpSet` answers `false` rather than throwing when the Event manager refuses
+   * the write (no write permission, unknown element) — which the caller must not
+   * mistake for a success, or the page would show a signal the project never got.
    */
-  private async ensureType(): Promise<void> {
-    if (this.typeReady || this.offline) return;
-    if (!this.api) {
-      this.offline = true;
-      return;
-    }
-    try {
-      const existing = await fetch(
-        `${TYPE_URL}/${encodeURIComponent(DP_TYPE)}`
-      );
-      if (existing.ok) {
-        this.typeReady = true;
-        return;
-      }
-    } catch {
-      this.offline = true;
-      return;
-    }
-    try {
-      const created = await fetch(
-        CREATE_TYPE_URL,
-        jsonPost({
-          typeName: DP_TYPE,
-          structure: {
-            name: DP_TYPE,
-            type: 'Struct',
-            children: LEAVES.map((leaf) => ({
-              name: leaf,
-              type: 'String',
-              refName: ''
-            }))
-          }
-        })
-      );
-      if (created.ok || created.status === HTTP_BAD_REQUEST)
-        this.typeReady = true;
-      else this.offline = true;
-    } catch {
-      this.offline = true;
-    }
-  }
-
-  private async send(url: string, init: RequestInit): Promise<void> {
-    const response = await fetch(url, init);
-    if (!response.ok)
-      throw new Error(`${init.method ?? 'GET'} ${url} → ${response.status}`);
+  private async write(dpe: string, value: string): Promise<void> {
+    if (!this.api) throw new Error('no runtime API');
+    const ok = await firstValueFrom(this.api.dpSet(dpe, value));
+    if (ok === false) throw new Error(`dpSet ${dpe} refused`);
   }
 
   private mem(): SignalConfig[] {

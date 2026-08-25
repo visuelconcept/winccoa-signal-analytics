@@ -1,4 +1,4 @@
-# wui-signal-analytics — integration
+# Signal Analytics — integration
 
 Deploying, troubleshooting and extending the page and its Python manager.
 
@@ -6,7 +6,8 @@ Deploying, troubleshooting and extending the page and its Python manager.
 
 | Source | Target | By |
 | --- | --- | --- |
-| `libs/wui-signal-analytics/` | `<project>/data/dashboard-wc/pages/signal-analytics.js` | `npm run build:pages` |
+| `libs/default-components/src/lib/standalone-pages/signal-analytics*` | `<project>/data/dashboard-wc/pages/signal-analytics.js` | `npm run build:pages` |
+| `apps/dashboard-wc/config/menuconfig.jsonc` | `<project>/data/dashboard-wc/menuconfig.json` | `npm run build:pages` |
 | `backend/python/**` (minus `tests/`) | `<project>/python/` | `deploy-backend.mjs` |
 | — | a line in `<project>/config/progs` | `deploy-backend.mjs` |
 
@@ -60,11 +61,16 @@ node tools/scripts/deploy-backend.mjs --project "<project>" --only signal-analyt
 
 ## Deployment dependencies
 
-- **`wui-para`** must be deployed too. The page creates the `SignalAnalysis` DP
-  type and its datapoints through `/api/para/dptype/create` and
-  `/api/para/dp/create`; `OaRxJsApi` can read and write values but cannot create
-  types or datapoints. Without the route the page runs in demonstration mode on
-  fabricated findings and says so in a banner.
+- **No other WebUI module.** The page speaks only datapoint values, which the
+  standard webserver (`webserver/run.js`) already carries.
+- **The manager must have run once**, because it is what creates the DP types
+  (`SignalAnalysis`, `SignalAnalyticsHub`) and the hub datapoint the page probes.
+  A browser cannot: `OaRxJsApi` reads, subscribes and writes values, and has no
+  `dpCreate`. Until then the page runs in demonstration mode on fabricated
+  findings and says so in a banner.
+- **The manager needs engineering rights** in its project. Without them
+  provisioning fails (logged in `<project>/log/python<num>.log`), the analysis
+  service still starts, and the page keeps reporting demonstration mode.
 - **The analysed elements must be archived** — the manager reads
   `:_original.._value` over the period.
 
@@ -78,7 +84,9 @@ node tools/scripts/deploy-backend.mjs --project "<project>" --only signal-analyt
 | *"a window of N samples needs at least 4N archived values"* | Too little history for the window | Shorten the window or lengthen the period |
 | Status stays `queued` forever | The worker is busy with another signal | Analyses are serialised on purpose; wait, or reduce `maxPoints` |
 | Ran on `numpy` when `stumpy` was asked for | `stumpy`/Numba would not import | The reason is in the status banner and in `status.fallbackReason` — usually a NumPy version Numba does not accept yet |
-| The page shows *demonstration mode* | `/api/para` unreachable, or no write rights | Deploy `wui-para`; restart the webserver manager after a backend deploy |
+| The page shows *demonstration mode* | No `SignalAnalyticsHub` datapoint: the manager never ran, or could not provision | Start `signal_analytics_manager.py`; if it is running, look for `hub provisioning failed` in `<project>/log/python<num>.log` (usually missing engineering rights) |
+| *"the manager did not answer create within 15000 ms"* | The manager is running but its hub subscription is gone (restarted mid-request), or it is blocked | Retry; check the log for `could not subscribe to the hub request leaf` |
+| A signal was created but stays empty | The datapoint exists, its `config` leaf does not | Reopen the dialog and save; the manager seeds `config` on create, the page rewrites it right after |
 | The curve is dimmed and labelled *simulated* | `dpGetPeriod` returned nothing for that element | The findings are still real if the manager produced them; the *curve* is a fallback |
 
 **A useful first probe** — write a `ping` command to any configured signal and
@@ -114,18 +122,25 @@ Everything `parse_config` reads came from a browser. A window of 0 divides by
 zero; a history of 400 days reads the archive until PMON kills the manager. Every
 field is clamped there, not trusted.
 
-## Application Security
+## Permissions
 
-Roles live in
-[`libs/wui-signal-analytics/src/app-security.roles.json`](../../libs/wui-signal-analytics/src/app-security.roles.json)
-and are registered by the page itself (`registerModuleRoles`) — no central
-manifest. `view`, `configure`, `run`; all open until an admin assigns groups, so
-declaring them never breaks a deployment.
+Nothing to declare and nothing to provision: the page uses the runtime's own
+flags. Page visibility is the `permission` field of the menu entry
+(`["connected"]`); *Configure* needs `canEdit` and *Analyse* needs `canWrite`,
+both read from `WuiUserService`.
 
-Server-side enforcement is the `/api/para` route's for datapoint creation. The
-manager does not check who wrote a `command` leaf — see
+`canWrite` is enforced by the Event manager on every `dpSet`, so a read-only user
+cannot write a `command` leaf even by bypassing the UI. What the manager does not
+check is *who* wrote a leaf it reads — see
 [NOTES.md](./NOTES.md#what-is-not-enforced-server-side) for what that means and
 where the extension point is.
+
+### Adding a hub operation
+
+`request` admits exactly `create` and `delete`. A third one means a branch in
+`parse_hub_request` (validation) **and** one in `provision.handle` (execution),
+in the same commit — and it must keep the prefix fence: this manager never
+engineers a datapoint outside `SigAnalysis_*`.
 
 ## Related
 
